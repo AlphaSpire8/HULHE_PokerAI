@@ -2,7 +2,7 @@
 """
 合并的PokerAI游戏文件
 包含所有必要的类和函数：PokerEnv、GameLogger、编码器、Agent和主程序
-版本: v1.1 - 优化了代码质量和性能
+版本: v2.0 - 逻辑重构，确保单一真理之源
 """
 
 import random
@@ -48,7 +48,7 @@ def encode_state_to_psv(state, player_perspective):
     numeric_state_vec = np.array([my_stack / initial_stack, opp_stack / initial_stack, pot_size / (initial_stack * 2)], dtype=np.float32)
     action_history_vec = np.zeros((4, 5, 6), dtype=np.float32)
     round_map = {'preflop': 0, 'flop': 1, 'turn': 2, 'river': 3}
-    action_map = {'fold': 0, 'check': 1, 'call': 2, 'raise': 3, 'small_blind': 2, 'big_blind': 2} # Map blinds to 'call'
+    action_map = {'fold': 0, 'check': 1, 'call': 2, 'raise': 3}
     step_counters = [0, 0, 0, 0]
     for action_item in state['action_history']:
         round_idx = round_map.get(action_item['round'])
@@ -79,10 +79,7 @@ from agents.raise_agent import RaiseAgent
 # =============================================================================
 
 class PokerEnv:
-    # --- 改进点 1: 将规则定义为类常量 ---
-    PREFLOP_RAISE_TARGETS = [4, 6, 8]
-    POSTFLOP_BET_SIZE = 4
-    RAISE_LIMIT = 3 # 1 bet + 3 raises
+    RAISE_LIMIT = 3
 
     def __init__(self, initial_stack=200, big_blind=2):
         self.deck = Deck()
@@ -90,7 +87,9 @@ class PokerEnv:
         self.initial_stack = initial_stack
         self.big_blind = big_blind
         self.small_blind = big_blind // 2
-        self.players = [{'stack': self.initial_stack, 'hand': [], 'current_bet': 0, 'is_all_in': False} for _ in range(2)]
+        self.small_bet = self.big_blind
+        self.big_bet = 2 * self.big_blind
+        self.players = [{'stack': self.initial_stack, 'hand': [], 'current_bet': 0, 'is_all_in': False, 'initial_stack': self.initial_stack} for _ in range(2)]
         self.button_player = random.randint(0, 1)
 
     def reset(self):
@@ -108,6 +107,7 @@ class PokerEnv:
             p['hand'] = self.deck.draw(2)
             p['current_bet'] = 0
             p['is_all_in'] = False
+            p['initial_stack'] = p['stack'] # 记录本局开始时的筹码
         self._post_blinds()
         return self._get_state(), False
 
@@ -164,7 +164,7 @@ class PokerEnv:
         opp_idx = 1 - player_idx
         self.players[opp_idx]['stack'] += self.pot
         self.done = True
-        self.winner_info = {'winner': opp_idx, 'pot': self.pot, 'reason': 'fold'}
+        self._finalize_hand(winner=opp_idx, reason='fold')
 
     def _handle_check(self, player_idx):
         self.current_player = 1 - player_idx
@@ -184,13 +184,8 @@ class PokerEnv:
         self.current_player = 1 - player_idx
 
     def _handle_raise(self, player_idx):
-        # --- 改进点 2: 使用辅助函数和常量，逻辑更清晰 ---
-        if len(self.community_cards) == 0: # Preflop
-            target_bet = self.PREFLOP_RAISE_TARGETS[self.raises_this_round]
-        else: # Postflop
-            bet_size = self.POSTFLOP_BET_SIZE
-            target_bet = self.current_bet + bet_size
-        
+        bet_size = self.big_bet if len(self.community_cards) >= 3 else self.small_bet
+        target_bet = self.current_bet + bet_size
         amount_to_raise = target_bet - self.players[player_idx]['current_bet']
         self._player_bet(player_idx, amount_to_raise)
         self.current_bet = self.players[player_idx]['current_bet']
@@ -218,10 +213,21 @@ class PokerEnv:
         score0 = self.evaluator.evaluate(self.players[0]['hand'], self.community_cards)
         score1 = self.evaluator.evaluate(self.players[1]['hand'], self.community_cards)
         winner = -1
-        if score0 < score1: winner = 0; self.players[0]['stack'] += self.pot
-        elif score1 < score0: winner = 1; self.players[1]['stack'] += self.pot
+        if score0 < score1: winner = 0
+        elif score1 < score0: winner = 1
+        if winner != -1: self.players[winner]['stack'] += self.pot
         else: self.players[0]['stack'] += self.pot / 2; self.players[1]['stack'] += self.pot / 2
-        self.winner_info = {'winner': winner, 'pot': self.pot, 'reason': 'showdown'}
+        self._finalize_hand(winner=winner, reason='showdown')
+
+    def _finalize_hand(self, winner, reason):
+        p0_net = self.players[0]['stack'] - self.players[0]['initial_stack']
+        p1_net = self.players[1]['stack'] - self.players[1]['initial_stack']
+        self.winner_info = {
+            'winner': winner,
+            'pot': self.pot,
+            'reason': reason,
+            'results': [p0_net, p1_net]
+        }
 
     def _get_round(self):
         if len(self.community_cards) == 0: return 'preflop'
@@ -230,10 +236,8 @@ class PokerEnv:
         if len(self.community_cards) == 5: return 'river'
 
     def _record_action(self, player_idx, action):
-        # --- 改进点 3: 使用手动浅拷贝代替deepcopy，提升性能 ---
-        snapshot_players = [p.copy() for p in self.players]
         state_snapshot = {
-            'players': snapshot_players,
+            'players': [{'stack': p['stack'], 'current_bet': p['current_bet']} for p in self.players],
             'pot': self.pot,
             'community_cards': [Card.int_to_str(c) for c in self.community_cards]
         }
@@ -266,8 +270,6 @@ class GameLogger:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_dir = os.path.join(base_log_dir, timestamp)
         if not os.path.exists(self.log_dir): os.makedirs(self.log_dir)
-        
-        # --- 改进点 4: 一次性打开文件句柄 ---
         self.human_log_file = open(os.path.join(self.log_dir, 'gamelog.txt'), 'w')
         self.vector_log_file = open(os.path.join(self.log_dir, 'training_data.csv'), 'w', newline='')
         self.csv_writer = csv.writer(self.vector_log_file)
@@ -282,23 +284,21 @@ class GameLogger:
         self.human_log_file.write(f"Button is Player {state['button_player']}\n")
         history = state['action_history']
         if not history: return
-        sb_entry = history[0]
-        sb_player_idx = sb_entry['player']
-        sb_amount = sb_entry['state_after_action']['players'][sb_player_idx]['current_bet']
-        p0_initial_stack = sb_entry['state_after_action']['players'][0]['stack']
-        p1_initial_stack = sb_entry['state_after_action']['players'][1]['stack']
-        if sb_player_idx == 0: p0_initial_stack += sb_amount
-        else: p1_initial_stack += sb_amount
-        bb_entry = history[1]
-        bb_player_idx = bb_entry['player']
-        bb_amount = bb_entry['state_after_action']['players'][bb_player_idx]['current_bet']
-        if bb_player_idx == 0: p0_initial_stack += bb_amount
-        else: p1_initial_stack += bb_amount
+        
+        p0_final_stack = state['players'][0]['stack']
+        p1_final_stack = state['players'][1]['stack']
+        p0_result = state['winner_info']['results'][0]
+        p1_result = state['winner_info']['results'][1]
+        p0_initial_stack = p0_final_stack - p0_result
+        p1_initial_stack = p1_final_stack - p1_result
+        
         p0_hand = state['full_info']['hands'][0]
         p1_hand = state['full_info']['hands'][1]
+
         self.human_log_file.write(f"Player 0, Hand: {p0_hand}, Stack: {p0_initial_stack}\n")
         self.human_log_file.write(f"Player 1, Hand: {p1_hand}, Stack: {p1_initial_stack}\n")
         self.human_log_file.write("Pot: 0\n\n--- Actions ---\n")
+        
         current_round = ''
         for entry in history:
             action_round = entry['round']
@@ -309,6 +309,7 @@ class GameLogger:
                     self.human_log_file.write(f"Community Cards: {entry['state_after_action']['community_cards']}\n")
             player_idx, action, state_after = entry['player'], entry['action'], entry['state_after_action']
             self.human_log_file.write(f"Player {player_idx}, action: {action}, Stack: {state_after['players'][player_idx]['stack']}, Pot: {state_after['pot']}\n")
+        
         self.human_log_file.write(f"Pot: {state['pot']}\n\n--- Results ---\n")
         self.human_log_file.write(f"Community Cards: {state['community_cards']}\n")
         self.human_log_file.write(f"Player 0, Hand: {p0_hand}, Stack: {state['players'][0]['stack']}\n")
@@ -352,23 +353,22 @@ def main(max_hands=100):
                 agent = agents[current_player_id]
                 action = agent.act(state, legal_actions)
                 state, reward, done, info = env.step(action)
+            
             final_state = env._get_state()
             logger.log_human_readable(final_state, hand_id)
+            
+            results = final_state['winner_info']['results']
             for i in range(2):
                 psv = encode_state_to_psv(final_state, player_perspective=i)
-                # More robust result calculation
-                initial_hand_state = final_state['action_history'][0]['state_after_action']
-                initial_hand_stack = initial_hand_state['players'][i]['stack'] + initial_hand_state['players'][i]['current_bet']
-                final_hand_stack = final_state['players'][i]['stack']
-                result = final_hand_stack - initial_hand_stack
+                result = results[i]
                 logger.log_vectorized(psv, result)
+            
             print(f"  Hand #{hand_id} completed. Stacks: P0={final_state['players'][0]['stack']}, P1={final_state['players'][1]['stack']}")
     finally:
-        # --- 改进点 5: 确保文件在程序结束或出错时都能被关闭 ---
         logger.close()
         print(f"\nFinished run. Log files closed.")
-        print(f"Human-readable log: {logger.human_log_path}")
-        print(f"Training data (CSV): {logger.vector_log_path}")
+        print(f"Human-readable log: {logger.human_log_file.name}")
+        print(f"Training data (CSV): {logger.vector_log_file.name}")
 
 if __name__ == "__main__":
     main(max_hands=20)
