@@ -1,0 +1,9 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# Log files - We don't want to version control huge log files
+logs/
+
+# VS Code specific files
+.vscode/
