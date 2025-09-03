@@ -6,7 +6,7 @@ class BaseAgent(ABC):
     所有智能体的抽象基类
     """
     @abstractmethod
-    def act(self, state, legal_actions):
+    def act(self, game_state_history, legal_actions):
         """
         根据当前状态和合法动作列表，决定并返回一个动作。
 
