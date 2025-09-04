@@ -21,6 +21,7 @@ class PokerEnv:
         self.big_bet = 2 * self.big_blind
         self.players = [{'stack': 0, 'hand': [], 'current_bet': 0, 'is_all_in': False, 'initial_hand_stack': 0} for _ in range(2)]
         self.button_player = random.randint(0, 1)
+        self.is_betting_capped = False # 新增：用于标记本轮下注是否被“封顶”
 
     def reset(self, randomize_stacks=True):
         self.button_player = 1 - self.button_player
@@ -31,6 +32,7 @@ class PokerEnv:
         self.done = False
         self.winner_info = {}
         self.action_history = []
+        self.is_betting_capped = False # 新增：重置封顶标记
 
         if randomize_stacks:
             # p0_stack = random.randint(10, self.initial_total_stack - 10)
@@ -82,7 +84,7 @@ class PokerEnv:
     def get_legal_actions(self):
         """
         获取当前玩家的合法动作列表。
-        v2.2: 修正了'raise'动作的判断条件。
+        v2.3: 增加了对is_betting_capped的检查，以禁止在封顶后加注。
         """
         if self.done: return []
         actions = ['fold']
@@ -94,27 +96,19 @@ class PokerEnv:
 
         # Call / Check logic
         if amount_to_call > 0:
-            # 如果需要跟注的金额大于自己剩余的筹码，只能All-in Call或Fold
-            # 这种情况通常被简化为'call'，由_handle_call处理All-in
             actions.append('call')
         else:
             actions.append('check')
 
         # Raise logic
-        # 只要加注次数未达上限，且玩家在跟注后还有剩余筹码，他就可以尝试'raise'。
-        # 即使剩余筹码不足以完成一次标准加注，这也将触发一个合法的All-in。
         can_raise = self.raises_this_round < self.RAISE_LIMIT
-        
-        # 另外一个限制：如果对手已经All-in，且筹码比你少，你不能再加注。
-        # 你只能call或fold。
         opponent_is_all_in_shorter = opponent['is_all_in'] and opponent['current_bet'] < self.current_bet
 
-        if can_raise and not opponent_is_all_in_shorter:
-            # 核心条件：玩家的筹码是否足够支付call，并且还有剩余？
+        # 最终判断：只有在次数未满、对手未造成封顶、且本轮未被不完整加注封顶时，才可加注
+        if can_raise and not opponent_is_all_in_shorter and not self.is_betting_capped:
             if player['stack'] > amount_to_call:
                 actions.append('raise')
         
-        # 移除重复的 'check' (如果有的话), 'call' 优先
         if 'call' in actions and 'check' in actions:
             actions.remove('check')
 
@@ -137,7 +131,7 @@ class PokerEnv:
     def _handle_raise(self, player_idx):
         """
         处理加注动作，能够区分“完整加注”和“不完整All-in”。
-        v2.2: 重构了加注逻辑，以正确处理不完整的All-in加注。
+        v2.3: 在不完整All-in时，设置is_betting_capped标志。
         """
         player = self.players[player_idx]
         
@@ -150,23 +144,19 @@ class PokerEnv:
         actual_bet_amount = self._player_bet(player_idx, amount_for_full_raise)
 
         # 3. 核心判断：这次下注是完整加注还是不完整All-in？
-        #    当玩家All-in且实际下注额小于标准加注额时，为不完整加注。
         if player['is_all_in'] and actual_bet_amount < amount_for_full_raise:
             # --- 情况B：不完整All-in ---
-            # 这是一个不完整的加注，它不能重新开启下注轮。
-            # 我们不需要更新 self.current_bet, self.raises_this_round, 或 self.last_raiser。
-            # 只需要把行动权交给对手即可。
-            pass # 明确表示我们在此处不执行任何操作
+            # 它不能重新开启下注轮，因此我们将下注“封顶”。
+            self.is_betting_capped = True
         else:
             # --- 情况A：完整加注 ---
-            # 这是一次标准的、能开启新一轮下注的加注。
             self.current_bet = player['current_bet']
             self.raises_this_round += 1
             self.last_raiser = player_idx
 
         # 4. 无论哪种情况，行动权都转移给对手
         self.current_player = 1 - player_idx
-        
+
     def _is_betting_over(self):
         """
         判断当前下注轮是否结束。
@@ -238,6 +228,7 @@ class PokerEnv:
         for p in self.players: p['current_bet'] = 0
         self.current_bet = 0
         self.raises_this_round = 0
+        self.is_betting_capped = False # 新增：为下一轮重置封顶标记
         bb_idx = 1 - self.button_player
         self.current_player = bb_idx
         self.last_raiser = bb_idx
