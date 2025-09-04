@@ -56,4 +56,4 @@ def main(num_hands=100, randomize_stacks=True):
         print(f"Training data (CSV): {logger.vector_log_file.name}")
 
 if __name__ == "__main__":
-    main(num_hands=15)
+    main(num_hands=10)

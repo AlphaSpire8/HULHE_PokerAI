@@ -51,6 +51,14 @@ class GameLogger:
         self.human_log_file.write(f"Community Cards: {state['community_cards']}\n")
         self.human_log_file.write(f"Player 0, Hand: {p0_hand}, Stack: {state['players'][0]['stack']}\n")
         self.human_log_file.write(f"Player 1, Hand: {p1_hand}, Stack: {state['players'][1]['stack']}\n")
+        
+        # --- 新增逻辑: 明确标明赢家 ---
+        winner = state['winner_info'].get('winner')
+        if winner == -1:
+            self.human_log_file.write("Winner: Tie\n")
+        else:
+            self.human_log_file.write(f"Winner: Player {winner}\n")
+            
         self.human_log_file.write("="*30 + "\n\n")
 
     def log_vectorized(self, psv, result):
