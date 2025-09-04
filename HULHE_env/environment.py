@@ -36,7 +36,7 @@ class PokerEnv:
 
         if randomize_stacks:
             # p0_stack = random.randint(10, self.initial_total_stack - 10)
-            p0_stack = random.randint(10,30)
+            p0_stack = random.randint(5,15)
             p1_stack = self.initial_total_stack - p0_stack
             self.players[0]['stack'] = p0_stack
             self.players[1]['stack'] = p1_stack
@@ -131,7 +131,7 @@ class PokerEnv:
     def _handle_raise(self, player_idx):
         """
         处理加注动作，能够区分“完整加注”和“不完整All-in”。
-        v2.3: 在不完整All-in时，设置is_betting_capped标志。
+        v2.4 (Final): 修正了不完整All-in时current_bet的更新逻辑。
         """
         player = self.players[player_idx]
         
@@ -148,6 +148,8 @@ class PokerEnv:
             # --- 情况B：不完整All-in ---
             # 它不能重新开启下注轮，因此我们将下注“封顶”。
             self.is_betting_capped = True
+            # **最终修复**: 必须更新current_bet，以确保对手正确call。
+            self.current_bet = player['current_bet']
         else:
             # --- 情况A：完整加注 ---
             self.current_bet = player['current_bet']
