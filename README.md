@@ -24,6 +24,7 @@ PokerAI/
 ├── agents/                 # 存放所有AI智能体的实现
 |   ├── __init__.py
 |   ├── base_agent.py       # 定义所有Agent都必须遵守的“合同”
+|   ├── aggressive_agent.py # (测试用) 侵略性Agent，用于测试系统的鲁棒性
 |   └── random_agent.py     # (测试用) 随机决策Agent
 |
 ├── utils/                  # 存放数据处理等辅助工具

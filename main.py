@@ -1,14 +1,16 @@
 # main.py
 
 from HULHE_env.environment import PokerEnv
-from agents.random_agent import RandomAgent
+# from agents.random_agent import RandomAgent
+from agents.aggressive_agent import AggressiveAgent
 from utils.encoder import encode_state_to_psv
 from utils.logger import GameLogger
 
 def main(num_hands=100, randomize_stacks=True):
     print("Initializing Poker AI Simulation...")
     env = PokerEnv()
-    agents = [RandomAgent("Bot_A"), RandomAgent("Bot_B")]
+    # agents = [RandomAgent("Bot_A"), RandomAgent("Bot_B")]
+    agents = [AggressiveAgent("Bot_A"), AggressiveAgent("Bot_B")]
     logger = GameLogger()
     
     print(f"Agents: {agents[0].name} vs {agents[1].name}")
@@ -54,4 +56,4 @@ def main(num_hands=100, randomize_stacks=True):
         print(f"Training data (CSV): {logger.vector_log_file.name}")
 
 if __name__ == "__main__":
-    main(num_hands=100)
+    main(num_hands=15)

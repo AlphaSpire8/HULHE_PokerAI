@@ -7,9 +7,7 @@ from treys import Deck, Evaluator, Card
 class PokerEnv:
     """
     实现了单挑限注德州扑克(HU LHE)规则的、标准化的训练环境。
-    - 实现了随机化初始筹码的“模拟模式”。
-    - 实现了精确的下注、加注、盲注和行动顺序规则。
-    - 环境是唯一的“真理之源”，负责计算和报告每局结果。
+    版本: v1.1 - 修复了All-in时的边池和筹码退还逻辑
     """
     RAISE_LIMIT = 3 # 1 bet + 3 raises
 
@@ -39,7 +37,7 @@ class PokerEnv:
             p1_stack = self.initial_total_stack - p0_stack
             self.players[0]['stack'] = p0_stack
             self.players[1]['stack'] = p1_stack
-        else: # For fair evaluation
+        else:
             for p in self.players: p['stack'] = self.initial_total_stack / 2
 
         for p in self.players:
@@ -94,9 +92,10 @@ class PokerEnv:
         self.current_player = 1 - player_idx
 
     def _handle_call(self, player_idx):
-        amount_to_call = self.current_bet - self.players[self.current_player]['current_bet']
-        self._player_bet(self.current_player, amount_to_call)
-        self.current_player = 1 - self.current_player
+        amount_to_call = self.current_bet - self.players[player_idx]['current_bet']
+        self._player_bet(player_idx, amount_to_call)
+        self._handle_all_in_refund()
+        self.current_player = 1 - player_idx
 
     def _handle_raise(self, player_idx):
         bet_size = self.small_bet if len(self.community_cards) <= 3 else self.big_bet
@@ -107,6 +106,27 @@ class PokerEnv:
         self.raises_this_round += 1
         self.last_raiser = player_idx
         self.current_player = 1 - player_idx
+        self._handle_all_in_refund()
+
+    def _handle_all_in_refund(self):
+        """
+        核心修正：在call或raise后，检查是否有玩家all-in且下注额不匹配，
+        如果是，则将多余的筹码退还给下注更多的玩家。
+        """
+        p0, p1 = self.players[0], self.players[1]
+        if not (p0['is_all_in'] or p1['is_all_in']):
+            return
+
+        if p0['current_bet'] != p1['current_bet']:
+            if p0['current_bet'] > p1['current_bet']:
+                higher_bettor, lower_bettor = p0, p1
+            else:
+                higher_bettor, lower_bettor = p1, p0
+            
+            refund = higher_bettor['current_bet'] - lower_bettor['current_bet']
+            higher_bettor['stack'] += refund
+            self.pot -= refund
+            higher_bettor['current_bet'] -= refund
 
     def _is_betting_over(self):
         p0, p1 = self.players[0], self.players[1]
@@ -162,7 +182,6 @@ class PokerEnv:
         if len(self.community_cards) == 5: return 'river'
 
     def _record_action(self, player_idx, action):
-        # Rich history snapshot, including numeric state at the time of action
         numeric_state = {
             'stacks': [p['stack'] for p in self.players],
             'pot': self.pot
